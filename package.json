@@ -1,0 +1,26 @@
+{
+  "name": "wechaty-forwarder",
+  "version": "0.1.0",
+  "license": "MIT",
+  "dependencies": {
+    "async": "^3.2.0",
+    "async-lock": "^1.2.2",
+    "body-parser": "^1.19.0",
+    "config": "^3.3.1",
+    "express": "^4.17.1",
+    "fs-extra": "^9.0.0",
+    "isomorphic-ws": "^4.0.1",
+    "jsend": "^1.1.0",
+    "lodash": "^4.17.15",
+    "moment-timezone": "^0.5.28",
+    "mongoose": "^5.9.7",
+    "path": "^0.12.7",
+    "request": "^2.88.2",
+    "toml": "^3.0.0",
+    "wechaty": "^0.37.14",
+    "wechaty-puppet-macpro": "^0.5.4",
+    "winston": "^3.2.1",
+    "winston-daily-rotate-file": "^4.4.2",
+    "ws": "^7.2.3"
+  }
+}

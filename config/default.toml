@@ -1,0 +1,31 @@
+[puppet]
+# specify which puppet is using
+puppet = "macPro"
+
+  [puppet.macPro]
+  name = "test"
+  # your wechaty-puppet-macPro token
+  token = "testToken"
+
+[db]
+# mongoDb params
+name = "wechaty"
+addr = "localhost"
+port = 27017
+
+[server]
+# server address
+addr = "127.0.0.1"
+ssl = false
+
+  # for web api
+  [server.web]
+  port = 4000
+
+  # for webSocket
+  [server.webSocket]
+  port = 8080
+
+# default account id (gh_xxx) for forwarding miniProgram
+[miniProgram]
+accId = "foo"
