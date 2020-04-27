@@ -499,9 +499,9 @@ class MacBot {
       if (!targetType) {
         return new Error('invalid target');
       }
-      if (target === 'room') {
+      if (targetType === 'room') {
         target = this.wechaty.Room.load(target);
-      } else if (target === 'contact') {
+      } else if (targetType === 'contact') {
         target = this.wechaty.Contact.load(target);
       }
     } else if ((targetType === 'room') && !(target instanceof wechaty.Room)
