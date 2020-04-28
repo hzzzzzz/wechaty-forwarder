@@ -286,7 +286,7 @@ class MacBot {
     return info;
   }
 
-  async refreshContact(contactId) {
+  async refreshContact(contact) {
     let errMsg;
 
     if (!this.wechaty instanceof wechaty.Wechaty) {
@@ -295,7 +295,10 @@ class MacBot {
       return new Error(errMsg);
     }
 
-    const contactInstance = this.wechaty.Contact.load(contactId);
+    const contactInstance = _.isString(contact)
+      ? this.wechaty.Contact.load(contact)
+      : contact;
+
     try {
       await contactInstance.sync();
     } catch (err) {
@@ -403,7 +406,7 @@ class MacBot {
     return roomInfo;
   }
 
-  async refreshGroup(groupId) {
+  async refreshGroup(group) {
     let errMsg;
 
     if (!this.wechaty instanceof wechaty.Wechaty) {
@@ -412,7 +415,10 @@ class MacBot {
       return new Error(errMsg);
     }
 
-    const roomInstance = this.wechaty.Room.load(groupId);
+    const roomInstance = _.isString(group)
+      ? this.wechaty.Room.load(group)
+      : group;
+
     try {
       await roomInstance.sync();
     } catch (err) {
