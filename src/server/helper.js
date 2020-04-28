@@ -174,11 +174,15 @@ async function findMessages(senderId, limit = 10) {
 
   return _.map(found, (msg) => {
     let text = msg.text;
+    const parsed = utils.parseMessage(msg.text, msg.type);
     if (msg.type === constants.MessageType.MiniProgram) {
-      const parsed = utils.parseMessage(msg.text, msg.type);
       text = _.get(parsed, 'title');
       if (!text) {
-        text = _.get(parsed, 'description') || '';
+        text = _.get(parsed, 'description') || constants.MINIPROGRAM_TITLE;
+      }
+    } else if (msg.type === constants.MessageType.Contact) {
+      if (_.get(parsed, 'name')) {
+        text = _.get(parsed, 'name');
       }
     }
     return {
