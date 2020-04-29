@@ -19,33 +19,70 @@ const roomDb = require('../db/models/room');
 class MacBot {
   constructor(params) {
     this.token = _.get(params, 'token');
-    this.name = _.get(params, 'name');
+    this.name = _.get(params, 'name', 'macBot');
     this.db = _.get(params, 'db', 'wechaty');
+    this.pendingScan = null;
+    this.online = false;
 
     if (!this.token) {
       return;
     }
 
-    this.puppet = new PuppetMacpro({ token: this.token });
-
     this.wechaty = wechaty.Wechaty.instance({
-      puppet: this.puppet,
+      puppet: new PuppetMacpro({ token: this.token }),
       name: this.name,
     });
-
-    this.inited = false;
 
     // setup loggers
     this.log = _.partial(logger.log, `${this.name}`);
     this.verbose = _.partial(logger.verbose, `${this.name}`);
     this.error = _.partial(logger.error, `${this.name}`);
-  }
 
+    // ensure dirs
+    _.each([constants.AVATAR_DIR], (dir) => {
+      const ensured = _.attempt(fs.ensureDirSync, dir);
+      if (_.isError(ensured)) {
+        this.error(`ensure dir ${dir} failed`);
+      }
+    });
+
+    // create lock
+    this.lock = new utils.Lock();
+
+    // connect database
+    this.dbConnection = utils.connectDb(this.db);
+    this.dbModels = {
+      contact: contactDb.instance(this.dbConnection),
+      message: messageDb.instance(this.dbConnection),
+      room: roomDb.instance(this.dbConnection),
+    };
+
+    // setup listeners
+    _.each(
+      {
+        scan: this.onScan,
+        login: this.onLogin,
+        logout: this.onLogout,
+        message: this.onMessage,
+      },
+      (listener, event) => {
+        const listenerOk = this.setListener(event, listener.bind(this));
+        if (_.isError(listenerOk)) {
+          this.error(`init '${event}' listener failed: ${listenerOk.message}`);
+        }
+      }
+    );
+  }
 
   // BEGIN: basic functions
 
   isOnline() {
-    return this.wechaty.logonoff();
+    // return this.wechaty.logonoff(); // not reliable
+    return this.wechaty.logonoff() && (this.online === true);
+  }
+
+  isWaitingForScan() {
+    return !_.isEmpty(this.pendingScan);
   }
 
   setListener(event, listener) {
@@ -56,7 +93,9 @@ class MacBot {
       errMsg = `setListener '${event}' failed: invalid args`;
       this.error(errMsg);
       return new Error(errMsg);
-    } else if (_.includes(this.wechaty.listeners(event), listener)) {
+    }
+
+    if (_.includes(this.wechaty.listeners(event), listener)) {
       errMsg = `setListener '${event}' failed: listener already set`;
       this.verbose(errMsg);
       return;
@@ -66,7 +105,7 @@ class MacBot {
   }
 
   removeListener(event, listener) {
-    this.verbose(`try remove listener: ${event}`)
+    this.verbose(`try remove listener: ${event}`);
 
     let errMsg;
     if (!event || (listener && !_.isFunction(listener))) {
@@ -87,20 +126,37 @@ class MacBot {
   }
 
   onScan(code, status) {
+    if (status === constants.ScanStatus.Waiting) {
+      this.pendingScan = { code, status };
+    } else {
+      this.pendingScan = null;
+
+      if ([constants.ScanStatus.Cancel, constants.ScanStatus.Timeout].includes(status)) {
+        this.wechaty.stop();
+        this.wechaty.start();
+      }
+    }
+
     this.verbose(`Scan: status: ${status}, code: ${code}`);
   }
 
   async onLogin(me) {
+    this.pendingScan = null;
+    this.online = true;
+
     const myInfo = await this.extractContactInfo(me);
     if (!_.isError(myInfo)) {
       this.profile = myInfo;
     }
 
-    this.log(`Login finished: ${_.get(this.profile, 'id')}`);
+    this.log(`onLogin: ${_.get(this.profile, 'id')}`);
   }
 
-  onLogout(me) {
-    this.log(`Logout finished: ${_.get(this.profile, 'id')}`);
+  onLogout() {
+    this.pendingScan = null;
+    this.online = false;
+
+    this.log(`onLogout: ${_.get(this.profile, 'id')}`);
   }
 
   async onMessage(msg) {
@@ -132,67 +188,22 @@ class MacBot {
     await this.storeMessage(msgData);
   }
 
-  init(params) {
-    if (this.inited) {
-      return;
-    }
-
-    // ensure dirs
-    _.each([constants.AVATAR_DIR], (dir) => {
-      const ensured = _.attempt(fs.ensureDirSync, dir);
-      if (_.isError(ensured)) {
-        this.error(`ensure dir ${dir} failed`);
-      }
-    });
-
-    // create lock
-    this.lock = new utils.Lock();
-
-    // connect database
-    this.dbConnection = utils.connectDb(this.db);
-    this.dbModels = {
-      contact: contactDb.instance(this.dbConnection),
-      message: messageDb.instance(this.dbConnection),
-      room: roomDb.instance(this.dbConnection),
-    };
-
-    // setup listeners
-    _.each(
-      {
-        scan: _.get(params, 'onScan', this.onScan),
-        login: _.get(params, 'onLogin', this.onLogin),
-        logout: _.get(params, 'onLogout', this.onLogout),
-        message: _.get(params, 'onMessage', this.onMessage),
-      },
-      (listener, event) => {
-        const res = this.setListener(event, listener.bind(this));
-        if (_.isError(res)) {
-          this.error(`init '${event}' listener failed: ${res.message}`);
-        }
-      }
-    );
-
-    this.inited = true;
-  }
-
-  async start(params) {
+  async start() {
     this.verbose('try start bot');
 
-    let errMsg;
-
-    const initOk = this.init(params);
-    if (_.isError(initOk)) {
-      errMsg = `Fatal: start bot failed: ${initOk.message}`;
-      this.error(errMsg);
-      return new Error(errMsg);
+    if (this.isWaitingForScan()) {
+      return {
+        botStatus: 'scanning',
+        detail: this.pendingScan,
+      };
     }
 
     try {
-      const started = await this.wechaty.start();
+      await this.wechaty.start();
       this.log('bot started');
-      return started;
+      this.pendingScan = null;
     } catch (err) {
-      errMsg = `Fatal: start bot failed: ${err.message}`;
+      const errMsg = `Fatal: start bot failed: ${err.message}`;
       this.error(errMsg);
       return new Error(errMsg);
     }
@@ -213,11 +224,11 @@ class MacBot {
   }
 
   async logout() {
-    this.verbose(`try logout: ${_.get(this.profile, 'id')}`);
-
     if (!this.isOnline()) {
       return;
     }
+
+    this.verbose(`try logout: ${_.get(this.profile, 'id')}`);
 
     try {
       const loggedout = await this.wechaty.logout();
@@ -229,15 +240,7 @@ class MacBot {
     }
   }
 
-  async terminate() {
-    this.log('try terminate bot');
-
-    await this.logout();
-    return this.stop();
-  }
-
   // END: basic functions
-
 
   // BEGIN: contact functions
   async extractContactInfo(contactInstance) {
@@ -245,7 +248,7 @@ class MacBot {
     let alias;
     let avatar;
 
-    try { alias = await contactInstance.alias() } catch (err) { }
+    try { alias = await contactInstance.alias(); } catch (err) { }
     try {
       const avatarFileBox = await contactInstance.avatar();
       avatar = path.join(constants.AVATAR_DIR, `${contactId}.jpg`);
@@ -287,14 +290,6 @@ class MacBot {
   }
 
   async refreshContact(contact) {
-    let errMsg;
-
-    if (!this.wechaty instanceof wechaty.Wechaty) {
-      errMsg = 'Fatal: refreshContact failed: wechaty not instantiated';
-      this.error(errMsg);
-      return new Error(errMsg);
-    }
-
     const contactInstance = _.isString(contact)
       ? this.wechaty.Contact.load(contact)
       : contact;
@@ -302,7 +297,8 @@ class MacBot {
     try {
       await contactInstance.sync();
     } catch (err) {
-      errMsg = `refreshContact failed: ${err.message}`;
+      const errMsg = `refreshContact failed: ${err.message}`;
+      this.error(errMsg);
       return new Error(errMsg);
     }
 
@@ -331,19 +327,11 @@ class MacBot {
   }
 
   async refreshContactList() {
-    let errMsg;
-
-    if (!this.wechaty instanceof wechaty.Wechaty) {
-      errMsg = 'Fatal: fetchContactList failed: wechaty not instantiated';
-      this.error(errMsg);
-      return new Error(errMsg);
-    }
-
     let contactInstances = [];
     try {
       contactInstances = await this.wechaty.Contact.findAll();
     } catch (err) {
-      errMsg = `Fatal: getContactList failed: ${err.message}`;
+      const errMsg = `refreshContactList failed: ${err.message}`;
       this.error(errMsg);
       return new Error(errMsg);
     }
@@ -365,7 +353,7 @@ class MacBot {
   // BEGIN: group functions
   async extractRoomMembers(roomInstance) {
     let members = [];
-    try { members = await roomInstance.memberList() } catch (err) { }
+    try { members = await roomInstance.memberList(); } catch (err) { }
     if (!_.isEmpty(members)) {
       members = await this.parseContactInstances(members);
       if (_.isError(members)) {
@@ -383,9 +371,9 @@ class MacBot {
     };
 
     let name;
-    try { name = await roomInstance.topic() } catch (err) { }
+    try { name = await roomInstance.topic(); } catch (err) { }
     if (name) {
-      roomInfo.name = name; //群名
+      roomInfo.name = name; // 群名
     }
 
     const ownerInstance = roomInstance.owner();
@@ -407,14 +395,6 @@ class MacBot {
   }
 
   async refreshGroup(group) {
-    let errMsg;
-
-    if (!this.wechaty instanceof wechaty.Wechaty) {
-      errMsg = 'Fatal: refreshGroup failed: wechaty not instantiated';
-      this.error(errMsg);
-      return new Error(errMsg);
-    }
-
     const roomInstance = _.isString(group)
       ? this.wechaty.Room.load(group)
       : group;
@@ -422,7 +402,8 @@ class MacBot {
     try {
       await roomInstance.sync();
     } catch (err) {
-      errMsg = `refreshGroup failed: ${err.message}`;
+      const errMsg = `refreshGroup failed: ${err.message}`;
+      this.error(errMsg);
       return new Error(errMsg);
     }
 
@@ -464,18 +445,13 @@ class MacBot {
   }
 
   async refreshGroupList() {
-    let errMsg;
-    if (!this.wechaty instanceof wechaty.Wechaty) {
-      errMsg = 'Fatal: getContactList failed: wechaty not instantiated';
-      this.error(errMsg);
-      return new Error(errMsg);
-    }
-
     let roomInstances = [];
     try {
       roomInstances = await this.wechaty.Room.findAll();
     } catch (err) {
-      return err;
+      const errMsg = `refreshGroupList failed: ${err.message}`;
+      this.error(errMsg);
+      return new Error(errMsg);
     }
 
     return this.parseRoomInstances(roomInstances);
@@ -497,6 +473,8 @@ class MacBot {
   }
 
   async sendMessage(msgParams, msgType, target, targetType) {
+    let errMsg;
+
     if (_.isEmpty(msgParams)) {
       return new Error('invalid params');
     }
@@ -527,13 +505,19 @@ class MacBot {
         try {
           payload = await this.wechaty.Contact.find(utils.compactObj({ name, alias }));
         } catch (err) {
-          return err;
+          errMsg = `sendMessage failed: ${err.message}`;
+          this.error(errMsg);
+          return new Error(errMsg);
         }
         if (!payload) {
-          return new Error('contact card not found');
+          errMsg = 'sendMessage failed: contact not found';
+          this.error(errMsg);
+          return new Error(errMsg);
         }
       } else {
-        return new Error('invalid params');
+        errMsg = 'sendMessage failed: invalid contact info';
+        this.error(errMsg);
+        return new Error(errMsg);
       }
     } else if ([
       constants.MessageType.Audio,
@@ -549,8 +533,9 @@ class MacBot {
       const said = await target.say(payload);
       return said;
     } catch (err) {
-      this.error('sendMessage failed:', err.message);
-      return err;
+      errMsg = `sendMessage failed: ${err.message}`;
+      this.error(errMsg);
+      return new Error(errMsg);
     }
   }
 

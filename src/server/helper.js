@@ -68,7 +68,6 @@ function genApiErrorBody(errMsg, errCode) {
   return { error: errDetail };
 }
 
-
 function startWebSocketServer() {
   if (webSocket instanceof WebSocket.Server) {
     return;
@@ -93,6 +92,7 @@ function wsBroadcast(data) {
 function onBotLogin() {
   wsBroadcast({ botStatus: 'online' });
 }
+
 function onBotScan(code, status) {
   const data = {
     botStatus: 'scanning',
@@ -109,7 +109,10 @@ function onBotScan(code, status) {
 
   wsBroadcast(data);
 }
-function onBotLogout() {
+
+async function onBotLogout() {
+  await bot.stop();
+
   wsBroadcast({ botStatus: 'offline' });
 }
 
@@ -123,7 +126,15 @@ async function botOnline() {
   bot.setListener('scan', onBotScan);
   bot.setListener('logout', onBotLogout);
 
-  return bot.start();
+  const started = await bot.start();
+  if (_.isError(started)) {
+    return started;
+  }
+
+  if (_.get(started, 'botStatus') === 'scanning') {
+    const { code, status } = _.get(started, 'detail', {});
+    onBotScan(code, status);
+  }
 }
 
 async function botLogout() {
