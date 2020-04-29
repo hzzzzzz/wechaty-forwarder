@@ -53,7 +53,7 @@ function setup(router) {
 
   router.get('/api/message', async (req, res) => {
     const from = _.get(req, 'query.from');
-    const limit = _.get(req, 'query.limit', 10);
+    const limit = _.toNumber(_.get(req, 'query.limit')) || 10;
 
     const messages = await helper.findMessages(from, limit);
     if (_.isError(messages)) {
