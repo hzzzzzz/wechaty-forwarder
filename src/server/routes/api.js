@@ -1,13 +1,12 @@
 'use strict';
 
-const _ = require('lodash')
+const _ = require('lodash');
 
 const helper = require('../helper');
 const API_ERR_CODE = require('../errcode').API_ERR_CODE;
 
 
 function setup(router) {
-
   helper.startWebSocketServer();
 
   router.post('/api/start', async (req, res) => {

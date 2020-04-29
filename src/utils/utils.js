@@ -112,7 +112,7 @@ async function disconnectDb(dbName = constants.DB_NAME) {
   if (!dbName) {
     return new Error('invalid dbName');
   }
-  let connection = _.get(dbConnections, dbName);
+  const connection = _.get(dbConnections, dbName);
   if (!connection) {
     return new Error('connection not found');
   }
@@ -120,7 +120,7 @@ async function disconnectDb(dbName = constants.DB_NAME) {
   try {
     await connection.close();
   } catch (err) {
-    return new Error(`disconnectDb failed: ${err.message}`)
+    return new Error(`disconnectDb failed: ${err.message}`);
   }
 
   _.unset(dbConnections, dbName);
@@ -133,13 +133,14 @@ function compactObj(obj) {
     return obj;
   }
 
-  return _.omitBy(obj, (val) => {
-    return _.isNil(val)                        // undefined, null
+  return _.omitBy(
+    obj,
+    val => _.isNil(val)                        // undefined, null
       || (_.isNumber(val) && _.isNaN(val))     // NaN,
       || (_.isDate(val) && isNaN(val))         // Invalid Date
       // [], {}, ''
-      || ((_.isArray(val) || _.isPlainObject(val) || _.isString(val)) && _.isEmpty(val));
-  });
+      || ((_.isArray(val) || _.isPlainObject(val) || _.isString(val)) && _.isEmpty(val))
+  );
 }
 
 function parseMessage(content, msgType) {
@@ -189,4 +190,3 @@ module.exports = {
 
   parseMessage,
 };
-

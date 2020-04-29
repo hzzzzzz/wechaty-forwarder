@@ -51,12 +51,12 @@ contactSchema.index({
 const DEFAULT_PROJECTION = _.chain(contactSchema)
   .get('obj')
   .transform(
-    (result, value, key) => { result[key] = 1 },
+    (result, value, key) => { result[key] = 1; },
     {}
   )
   .omit('user')
   .set('_id', 0)
-  .value()
+  .value();
 
 class Contact {
   constructor(conn) {
@@ -92,7 +92,7 @@ class Contact {
         {
           $set: contactInfo,
         },
-        { upsert: true },
+        { upsert: true }
       ).exec();
       return updated;
     } catch (err) {
@@ -137,7 +137,7 @@ class Contact {
   async findContacts(currentUserId, contactIds, projection = DEFAULT_PROJECTION) {
     const condition = { user: currentUserId };
     if (!_.isEmpty(contactIds)) {
-      if (!isArray(contactIds)) {
+      if (!_.isArray(contactIds)) {
         contactIds = [contactIds];
       }
       condition.id = { $in: contactIds };

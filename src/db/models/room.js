@@ -31,7 +31,7 @@ roomSchema.index({
 const DEFAULT_PROJECTION = _.chain(roomSchema)
   .get('obj')
   .transform(
-    (result, value, key) => { result[key] = 1 },
+    (result, value, key) => { result[key] = 1; },
     {}
   )
   .omit('user')
@@ -71,7 +71,7 @@ class Room {
         {
           $set: roomInfo,
         },
-        { upsert: true },
+        { upsert: true }
       ).exec();
       return updated;
     } catch (err) {
@@ -99,7 +99,7 @@ class Room {
       const updated = await this.Model.updateOne(
         { user: currentUserId, id: roomId },
         {
-          $set: { memberList }
+          $set: { memberList },
         }
       ).exec();
       return updated;

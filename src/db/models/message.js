@@ -52,7 +52,7 @@ messageSchema.index(
 const DEFAULT_PROJECTION = _.chain(messageSchema)
   .get('obj')
   .transform(
-    (result, value, key) => { result[key] = 1 },
+    (result, value, key) => { result[key] = 1; },
     {}
   )
   .omit('user')
