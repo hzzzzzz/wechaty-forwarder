@@ -24,9 +24,48 @@ const MINIPROGRAM_TITLE = '小程序';
 
 
 module.exports = {
+  // MessageType:
+  // {
+  //   Unknown: 0,
+  //   Attachment: 1,
+  //   Audio: 2,
+  //   Contact: 3,
+  //   ChatHistory: 4,
+  //   Emoticon: 5,
+  //   Image: 6,
+  //   Text: 7,
+  //   Location: 8,
+  //   MiniProgram: 9,
+  //   Transfer: 10,
+  //   RedEnvelope: 11,
+  //   Recalled: 12,
+  //   Url: 13,
+  //   Video: 14,
+  // }
   MessageType: wechatyPuppet.MessageType,
+  // ScanStatus:
+  // {
+  //   Unknown: 0,
+  //   Cancel: 1,
+  //   Waiting: 2,
+  //   Scanned: 3,
+  //   Confirmed: 4,
+  //   Timeout: 5,
+  // }
   ScanStatus: wechatyPuppet.ScanStatus,
+  // ContactType:
+  // {
+  //   Unknown: 0,
+  //   Personal: 1,
+  //   Official: 2,
+  // }
   ContactType: wechatyPuppet.ContactType,
+  // ContactGender:
+  // {
+  //   Unknown: 0,
+  //   Male: 1,
+  //   Female: 2,
+  // }
   ContactGender: wechatyPuppet.ContactGender,
 
   TIME_ZONE,
