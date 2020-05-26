@@ -2,7 +2,6 @@
 
 const _ = require('lodash');
 const wechaty = require('wechaty');
-const PuppetMacpro = require('wechaty-puppet-macpro').PuppetMacpro;
 const async = require('async');
 const fs = require('fs-extra');
 const path = require('path');
@@ -15,11 +14,25 @@ const contactDb = require('../db/models/contact');
 const messageDb = require('../db/models/message');
 const roomDb = require('../db/models/room');
 
+// unit in ms
+function genInterval(k, a, b, count) {
+  return _.toInteger(1000 * k / (1 + Math.exp(a - b * count)));
+}
 
-class MacBot {
+function genJoinGroupInterval(count) {
+  const interval = -40 * 1000 + genInterval(170, 2, 0.8, count);
+  return _.max([5000, interval]);
+}
+
+function genSendGroupMessageInterval(count) {
+  const interval = -10 * 1000 + genInterval(71, 2, 0.5, count);
+  return _.max([5000, interval]);
+}
+
+class Bot {
   constructor(params) {
     this.token = _.get(params, 'token');
-    this.name = _.get(params, 'name', 'macBot');
+    this.name = _.get(params, 'name', 'bot');
     this.db = _.get(params, 'db', 'wechaty');
     this.pendingScan = null;
     this.online = false;
@@ -28,8 +41,13 @@ class MacBot {
       return;
     }
 
+    const Puppet = _.get(params, 'Puppet');
+    if (!Puppet) {
+      return;
+    }
+
     this.wechaty = wechaty.Wechaty.instance({
-      puppet: new PuppetMacpro({ token: this.token }),
+      puppet: new Puppet({ token: this.token }),
       name: this.name,
     });
 
@@ -64,6 +82,7 @@ class MacBot {
         login: this.onLogin,
         logout: this.onLogout,
         message: this.onMessage,
+        'room-invite': this.onInvite,
       },
       (listener, event) => {
         const listenerOk = this.setListener(event, listener.bind(this));
@@ -72,6 +91,9 @@ class MacBot {
         }
       }
     );
+
+    this.initSendGroupMessageQueue();
+    this.initAcceptGroupInvitionQueue();
   }
 
   // BEGIN: basic functions
@@ -141,6 +163,9 @@ class MacBot {
   }
 
   async onLogin(me) {
+    const myId = _.get(me, 'id');
+    this.profile = { id: myId };
+
     this.pendingScan = null;
     this.online = true;
 
@@ -149,7 +174,35 @@ class MacBot {
       this.profile = myInfo;
     }
 
-    this.log(`onLogin: ${_.get(this.profile, 'id')}`);
+    this.log(`onLogin: ${myId}`);
+  }
+
+  async onInvite(roomInvitation) {
+    let groupName = '';
+
+    try {
+      groupName = await roomInvitation.roomTopic();
+    } catch (err) {
+      // do nothing
+    }
+
+    let inviter;
+    let inviterName = '';
+
+    try {
+      inviter = await roomInvitation.inviter();
+      inviterName = inviter.name();
+    } catch (err) {
+      // do nothing
+    }
+
+    this.log(`receive group ${groupName} invitation from ${inviterName}`);
+
+    this.acceptGroupInvitionQueue.push({
+      invitation: roomInvitation,
+      groupName,
+      inviterName,
+    });
   }
 
   onLogout() {
@@ -164,6 +217,7 @@ class MacBot {
       {
         from: _.get(msg.from(), 'id'),
         to: _.get(msg.to(), 'id'),
+        id: _.get(msg, 'id'),
         type: msg.type(),
         date: msg.date(),
         text: msg.text(),
@@ -187,6 +241,7 @@ class MacBot {
 
     await this.storeMessage(msgData);
   }
+
 
   async start() {
     this.verbose('try start bot');
@@ -246,15 +301,17 @@ class MacBot {
   async extractContactInfo(contactInstance) {
     const contactId = _.get(contactInstance, 'id');
     let alias;
-    let avatar;
-
     try { alias = await contactInstance.alias(); } catch (err) { }
-    try {
-      const avatarFileBox = await contactInstance.avatar();
-      avatar = path.join(constants.AVATAR_DIR, `${contactId}.jpg`);
-      avatarFileBox.toFile(avatar, true);
-    } catch (err) {
-      avatar = _.get(contactInstance, 'payload.avatar');
+
+    let avatar = _.get(contactInstance, 'payload.avatar');
+    if (avatar) {
+      try {
+        const avatarFileBox = await contactInstance.avatar();
+        avatar = path.join(constants.AVATAR_DIR, `${contactId}.jpg`);
+        avatarFileBox.toFile(avatar, true);
+      } catch (err) {
+        avatar = _.get(contactInstance, 'payload.avatar');
+      }
     }
 
     let info = {
@@ -271,7 +328,7 @@ class MacBot {
       type: contactInstance.type(),
     };
 
-    const address = _.get(contactInstance, 'payload.address');
+    const address = _.trim(_.get(contactInstance, 'payload.address'));
     if (address && address !== ',') {
       info.address = address;
     }
@@ -315,10 +372,22 @@ class MacBot {
   }
 
   parseContactInstances(contactInstances) {
+    const self = this;
+
     return new Promise((resolve) => {
       async.map(
         contactInstances,
-        this.extractContactInfo.bind(this),
+        async (contactInstance) => {
+          const info = await self.extractContactInfo.call(self, contactInstance);
+
+          await utils.wait(10); // added wait time to avoid wehcaty request issues
+
+          if (_.isError(info)) {
+            throw info;
+          }
+
+          return info;
+        },
         (err, res) => {
           resolve(err || res);
         }
@@ -433,10 +502,22 @@ class MacBot {
   }
 
   parseRoomInstances(roomInstances) {
+    const self = this;
+
     return new Promise((resolve) => {
       async.map(
         roomInstances,
-        this.extractRoomInfo.bind(this),
+        async (roomInstance) => {
+          const info = await self.extractRoomInfo.call(self, roomInstance);
+
+          await utils.wait(10); // added wait time to avoid wehcaty request issues
+
+          if (_.isError(info)) {
+            throw info;
+          }
+
+          return info;
+        },
         (err, res) => {
           resolve(err || res);
         }
@@ -464,17 +545,155 @@ class MacBot {
     }
     return groupList;
   }
-  // END: group functions
 
+  async kickMember(room, member) {
+    if (!room || !member) {
+      return new Error('invalid params');
+    }
+    if (_.isString(room)) {
+      room = this.wechaty.Room.load(room);
+    }
+    if (_.isString(member)) {
+      member = this.wechaty.Contact.load(member);
+    }
+
+    if (!(room instanceof wechaty.Room)
+      || !(member instanceof wechaty.Contact)
+    ) {
+      return new Error('invalid params');
+    }
+
+    if (_.get(room.owner(), 'id') !== _.get(this.profile, 'id')) {
+      return new Error('not group owner');
+    }
+
+    let kicked;
+    let groupName;
+    try {
+      kicked = await room.del(member);
+      groupName = await room.topic();
+    } catch (err) {
+      const errMsg = `kickMember failed: ${err.message}`;
+      this.error(errMsg);
+      return new Error(errMsg);
+    }
+
+    this.verbose(
+      `kick member "${member.name()}"(${_.get(member, 'id')}) from "${groupName}"(${_.get(room, 'id')})`
+    );
+
+    return kicked;
+  }
+
+  async changeGroupName(room, newName) {
+    if (!room || !newName) {
+      return new Error('invalid params');
+    }
+    if (_.isString(room)) {
+      room = this.wechaty.Room.load(room);
+    }
+    if (!(room instanceof wechaty.Room)) {
+      return new Error('invalid params');
+    }
+    if (_.get(room.owner(), 'id') !== _.get(this.profile, 'id')) {
+      return new Error('not group owner');
+    }
+
+    let changed;
+    let oldName;
+    try {
+      oldName = await room.topic();
+      changed = await room.topic(newName);
+    } catch (err) {
+      const errMsg = `changeGroupName failed: ${err.message}`;
+      this.error(errMsg);
+      return new Error(errMsg);
+    }
+
+    this.verbose(
+      `group name of ${_.get(room, 'id')} changed from "${oldName}" to "${newName}"`
+    );
+
+    return changed;
+  }
+
+  initAcceptGroupInvitionQueue() {
+    const self = this;
+
+    this.joinGroupCount = 0;
+
+    this.acceptGroupInvitionQueue = async.queue(
+      async (task) => {
+        const { invitation, groupName, inviterName } = task || {};
+        const logStr = `group ${groupName} invitation from ${inviterName}`;
+        try {
+          // return undefined, don't know whether success or not
+          await invitation.accept();
+          self.log(`accept ${logStr}`);
+          self.joinGroupCount += 1;
+          await utils.wait(genJoinGroupInterval(self.joinGroupCount));
+        } catch (err) {
+          self.error(`accept ${logStr} failed: ${err.message}`);
+        }
+      },
+      1
+    );
+
+    this.acceptGroupInvitionQueue.drain(
+      async () => {
+        self.acceptGroupInvitionQueue.pause();
+        await utils.wait(genJoinGroupInterval(self.joinGroupCount));
+        self.joinGroupCount = 0;
+        self.acceptGroupInvitionQueue.resume();
+      }
+    );
+  }
+
+  // END: group functions
 
   // BEGIN: message functions
   async storeMessage(message) {
     return this.dbModels.message.addMessage(_.get(this.profile, 'id'), message);
   }
 
-  async sendMessage(msgParams, msgType, target, targetType) {
-    let errMsg;
+  async genForwardParams(messageId, msg) {
+    if (_.isEmpty(msg)) {
+      try {
+        msg = await this.dbModels.message.Model.findOne(
+          { id: messageId },
+          { type: 1, text: 1, id: 1 },
+          { lean: true }
+        ).exec();
+      } catch (err) {
+        return err;
+      }
+    }
 
+    if (_.isEmpty(msg)) {
+      return new Error('message not found');
+    }
+
+    const parsed = utils.parseMessage(_.get(msg, 'text'), _.get(msg, 'type'));
+    if (_.isError(parsed) || _.isEmpty(parsed)) {
+      return parsed || new Error('invalid message');
+    }
+
+    let params = parsed;
+    if (_.get(msg, 'type') === constants.MessageType.MiniProgram) {
+      params = {
+        appid: _.get(parsed, 'accId') || constants.MINIPROGRAM_ACCID,
+        title: _.get(parsed, 'title') || constants.MINIPROGRAM_TITLE,
+        description: _.get(parsed, 'description', ''),
+        pagePath: _.get(parsed, 'pagePath'),
+        thumbUrl: _.get(parsed, 'thumbUrl'),
+        thumbKey: _.get(parsed, 'thumbKey'),
+      };
+    }
+    return params;
+  }
+
+
+  async sendMessage(msgParams, msgType, target, targetType) {
     if (_.isEmpty(msgParams)) {
       return new Error('invalid params');
     }
@@ -498,27 +717,7 @@ class MacBot {
     if (msgType === constants.MessageType.MiniProgram) {
       payload = new wechaty.MiniProgram(msgParams);
     } else if (msgType === constants.MessageType.Contact) {
-      const { id, name, alias } = msgParams;
-      if (id) {
-        payload = this.wechaty.Contact.load(id);
-      } else if (name || alias) {
-        try {
-          payload = await this.wechaty.Contact.find(utils.compactObj({ name, alias }));
-        } catch (err) {
-          errMsg = `sendMessage failed: ${err.message}`;
-          this.error(errMsg);
-          return new Error(errMsg);
-        }
-        if (!payload) {
-          errMsg = 'sendMessage failed: contact not found';
-          this.error(errMsg);
-          return new Error(errMsg);
-        }
-      } else {
-        errMsg = 'sendMessage failed: invalid contact info';
-        this.error(errMsg);
-        return new Error(errMsg);
-      }
+      payload = new wechaty.Contact(msgParams);
     } else if ([
       constants.MessageType.Audio,
       constants.MessageType.Image,
@@ -529,14 +728,98 @@ class MacBot {
       payload = wechaty.FileBox.fromUrl(msgParams);
     }
 
-    try {
-      const said = await target.say(payload);
-      return said;
-    } catch (err) {
-      errMsg = `sendMessage failed: ${err.message}`;
-      this.error(errMsg);
-      return new Error(errMsg);
+    const RETRY = 3;
+    let said;
+
+    /* eslint-disable no-await-in-loop */
+    for (let i = 0; i < RETRY; i++) {
+      try {
+        said = await target.say(payload);
+      } catch (err) {
+        said = new Error(`sendMessage failed: ${err.message}`);
+      }
+
+      if (!_.isError(said)) {
+        break;
+      }
+
+      if (i !== RETRY - 1) {
+        await utils.wait(1000);
+      }
+
+      this.error(said.message);
     }
+    /* eslint-disable no-await-in-loop */
+
+    return said;
+  }
+
+  initSendGroupMessageQueue() {
+    this.sendMessageCount = 0;
+
+    const self = this;
+
+    this.sendGroupMessageQueue = async.queue(
+      (task, done) => {
+        async.mapSeries(
+          task.messages,
+          async (message) => {
+            const { params, type, groupId, callback, lastGroupMessage, lastTaskMessage } =
+              message || {};
+            if (_.isEmpty(params) || _.isNil(type) || !groupId) {
+              return new Error('invalid params');
+            }
+
+            const sentCb = _.isFunction(callback) ? callback : _.noop;
+            const sent = await self.sendMessage(params, type, groupId, 'room');
+            const sentMessageId = _.get(sent, 'id');
+            if (!_.isError(sent) && sentMessageId) {
+              self.log(`message ${sentMessageId} sent to group ${groupId}`);
+              // self.sendMessageCount += 1;
+              // sentCb();
+            } else {
+              self.error(
+                `send message to group ${groupId} failed: ${_.get(sent, 'message', 'send failed')}`
+              );
+              // sentCb(true);
+            }
+            self.sendMessageCount += 1;
+            sentCb();
+
+            if (!lastTaskMessage) {
+              const interval = lastGroupMessage
+                ? genSendGroupMessageInterval(self.sendMessageCount)
+                : 500;
+
+              await utils.wait(interval);
+            }
+
+            return sent;
+          },
+          async () => {
+            if (_.isFunction(task.callback)) {
+              task.callback();
+            }
+
+            if (self.sendGroupMessageQueue.length()) {
+              await utils.wait(genSendGroupMessageInterval(self.sendMessageCount));
+            }
+
+            done();
+          }
+        );
+      },
+      1
+    );
+
+    this.sendGroupMessageQueue.drain(
+      async () => {
+        self.sendGroupMessageQueue.pause();
+        await utils.wait(genSendGroupMessageInterval(self.sendMessageCount));
+        self.sendMessageCount = 0;
+        self.sendGroupMessageQueue.resume();
+      }
+    );
   }
 
   // END: message functions
@@ -544,5 +827,5 @@ class MacBot {
 
 
 module.exports = {
-  MacBot,
+  Bot,
 };

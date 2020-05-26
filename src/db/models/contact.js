@@ -29,7 +29,7 @@ const contactSchema = new mongoose.Schema(
   {
     user: String,                               // contactId of current wechat account
     id: { type: String, unique: true },         // contactId of contact
-    wechat: { type: String, unique: true },
+    wechat: String,
     name: String,
     alias: String,
     gender: { type: Number, enum: GENDERS_ENUM },
@@ -41,12 +41,19 @@ const contactSchema = new mongoose.Schema(
     isFriend: Boolean,
     type: { type: Number, enum: TYPES_ENUM },
     self: Boolean,
+    blacklisted: Boolean,
   }
 );
 
 contactSchema.index({
   user: 1,
 });
+contactSchema.index(
+  {
+    wechat: 1,
+  },
+  { partialFilterExpression: { wechat: { $exists: true } } }
+);
 
 const DEFAULT_PROJECTION = _.chain(contactSchema)
   .get('obj')
@@ -74,16 +81,15 @@ class Contact {
 
   async addOrUpdateContact(currentUserId, contactInfo) {
     logVerbose(
-      'addOrUpdateContact, currentUser=', currentUserId, 'contactInfo=', contactInfo
+      `addOrUpdateContact, currentUser=${currentUserId}, contactInfo=${JSON.stringify(contactInfo)}`
     );
 
     if (!currentUserId) {
-      return new Error('invalid currentUserId');
+      return new Error('contactId of current user must be specified');
     }
-
     const contactId = _.get(contactInfo, 'id');
-    if (!contactId || !_.get(contactInfo, 'wechat')) {
-      return new Error('invalid contactInfo');
+    if (!contactId) {
+      return new Error('invalid contactId');
     }
 
     try {
@@ -105,7 +111,7 @@ class Contact {
     const self = this;
     return new Promise((resolve) => {
       if (!currentUserId) {
-        return resolve(new Error('invalid currentUserId'));
+        return resolve(new Error('contactId of current user must be specified'));
       }
       if (_.isEmpty(contactInfoArr)) {
         return resolve(new Error('invalid contactInfoArr'));
@@ -150,6 +156,21 @@ class Contact {
       logError(`findContacts failed: ${err.message}`);
       return err;
     }
+  }
+
+  async isBlacklisted(currentUserId, contactId) {
+    let found;
+    try {
+      found = await this.Model.findOne(
+        { user: currentUserId, id: contactId, blacklisted: true },
+        DEFAULT_PROJECTION,
+        { lean: true }
+      ).exec();
+    } catch (err) {
+      logError(`check contact blacklisted failed: ${err.message}`);
+    }
+
+    return !_.isEmpty(found);
   }
 }
 

@@ -3,21 +3,23 @@
 const mongoose = require('mongoose');
 const _ = require('lodash');
 
-const constants = require('../../utils/constants');
+// const constants = require('../../utils/constants');
 const utils = require('../../utils/utils');
 const logger = require('../../utils/logger');
 
 const logError = _.partial(logger.error, 'messageModel');
 const logVerbose = _.partial(logger.verbose, 'messageModel');
 
-const TYPES_ENUM = _.values(constants.MessageType);
+// const TYPES_ENUM = _.values(constants.MessageType);
 
 const messageSchema = new mongoose.Schema(
   {
+    id: { type: String, unique: true },
     user: String,                               // contactId of current wechat account
     from: String,                               // contactId of sender
     to: String,                                 // contactId of receiver
-    type: { type: Number, enum: TYPES_ENUM },
+    // type: { type: Number, enum: TYPES_ENUM },
+    type: Number,
     date: Date,
     text: String,
     room: String,
@@ -75,11 +77,10 @@ class Message {
 
   async addMessage(currentUserId, message) {
     logVerbose(
-      'addMessage, currentUser=', currentUserId, 'message=', message
+      `addMessage, currentUser=${currentUserId}, message=${JSON.stringify(message)}`
     );
-
     if (!currentUserId) {
-      return new Error('invalid currentUserId');
+      return new Error('contactId of current user must be specified');
     }
     if (!_.isPlainObject(message) || _.isEmpty(message)) {
       return new Error('invalid message');

@@ -3,9 +3,19 @@
 puppet = "macPro"
 
   [puppet.macPro]
-  name = "test"
   # your wechaty-puppet-macPro token
-  token = "testToken"
+  name = "macPuppet"
+  token = "foo"
+
+  [puppet.hostie]
+  # your wechaty-puppet-hostie token
+  name = "winPuppet"
+  token = "foo"
+
+  [puppet.padPlus]
+  # your wechaty-puppet-padplus token
+  name = "padPuppet"
+  token = "foo"
 
 [db]
 # mongoDb params
@@ -18,14 +28,14 @@ port = 27017
 addr = "127.0.0.1"
 ssl = false
 
-  # for web api
   [server.web]
+  # for web api
   port = 4000
 
-  # for webSocket
   [server.webSocket]
+  # for webSocket
   port = 8080
 
-# default account id (gh_xxx) for forwarding miniProgram
 [miniProgram]
+# default account id (gh_xxx) for forwarding miniProgram
 accId = "foo"

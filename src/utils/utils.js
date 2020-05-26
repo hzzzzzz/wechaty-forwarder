@@ -4,6 +4,7 @@ const _ = require('lodash');
 const moment = require('moment-timezone');
 const mongoose = require('mongoose');
 const AsyncLock = require('async-lock');
+const qrcode = require('qrcode');
 
 const db = require('../db/database');
 const constants = require('./constants');
@@ -145,6 +146,12 @@ function compactObj(obj) {
 
 function parseMessage(content, msgType) {
   function parseMiniProgram() {
+    const parsed = _.attempt(JSON.parse, content);
+    if (!_.isError(parsed) && _.isPlainObject(parsed) && !_.isEmpty(parsed)) {
+      parsed.isPayload = true;
+      return parsed;
+    }
+
     const [, appName] = /小程序\[(.+?)\]/.exec(content) || [];
     const [, accId] = /\[ID:(.+?)@app\]/.exec(content) || [];
     const [, title] = /\[标题:(.*?)\]/.exec(content) || [];
@@ -160,9 +167,13 @@ function parseMessage(content, msgType) {
     return _.isError(parsed) ? content : parsed;
   }
 
+  // FIXME: not supported currently
   function parseContact() {
-    const [, name] = /^(.+?),/.exec(content) || [];
-    return name ? { name } : content;
+    const [name, avatar, id] = _.split(content, ',') || [];
+    // if (id) {
+    //   id = _.replace(id, '@stranger', '');
+    // }
+    return compactObj({ name, avatar, id });
   }
 
   const parsers = {
@@ -175,6 +186,36 @@ function parseMessage(content, msgType) {
 
   return _.isFunction(parser) ? parser(content) : content;
 }
+
+async function genQrcode(text, format, dest) {
+  if (!text) {
+    return new Error('invalid text');
+  }
+
+  if (format === 'dataUrl') {
+    let dataUrl;
+    try {
+      dataUrl = await qrcode.toDataURL(text);
+    } catch (err) {
+      dataUrl = err;
+    }
+
+    return dataUrl;
+  }
+
+  if (!dest) {
+    return new Error('output file path not specified');
+  }
+
+  try {
+    await qrcode.toFile(dest, text, { type: 'png', width: 256 });
+  } catch (err) {
+    return err;
+  }
+
+  return dest;
+}
+
 
 module.exports = {
   moment,
@@ -189,4 +230,6 @@ module.exports = {
   compactObj,
 
   parseMessage,
+
+  genQrcode,
 };

@@ -99,9 +99,11 @@ function log(scp) {
     ? [arguments[0]]
     : new Array(...arguments);
 
+  // ['utils', 'log string1', 'log string2']
+  // => ['[utils]<crawler01> %s %s', 'log string1', 'log string2']
   let placeHolderStr = _.chain(m)
     .tail()
-    .map(msg => ((_.isObject(msg) && !_.isFunction(msg)) ? '%j' : '%s'))
+    .map(msg => (_.isObject(msg) ? '%O' : '%s'))
     .join(' ')
     .value();
   placeHolderStr = placeHolderStr ? ` ${placeHolderStr}` : '';
