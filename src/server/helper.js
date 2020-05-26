@@ -1,11 +1,14 @@
 'use strict';
 
 const _ = require('lodash');
-const WebSocket = require('isomorphic-ws');
 const async = require('async');
-const mongoose = require('mongoose');
+const uuid = require('uuid').v1;
 
-const MacBot = require('../bot/macbot').MacBot;
+const WinBot = require('../bot/hostie').Bot;
+const MacBot = require('../bot/macpro').Bot;
+const PadBot = require('../bot/padplus').Bot;
+
+const webSocket = require('./websocket');
 const utils = require('../utils/utils');
 const constants = require('../utils/constants');
 const logger = require('../utils/logger');
@@ -14,86 +17,27 @@ const logger = require('../utils/logger');
 const logError = _.partial(logger.error, 'serverHelper');
 const log = _.partial(logger.log, 'serverHelper');
 
-// global instances:
-let webSocket;
 
-const bot = new MacBot({
+let Bot;
+if (constants.PUPPET_TYPE === 'hostie') {
+  Bot = WinBot;
+} else if (constants.PUPPET_TYPE === 'macPro') {
+  Bot = MacBot;
+} else if (constants.PUPPET_TYPE === 'padPlus') {
+  Bot = PadBot;
+}
+
+const bot = new Bot({
   token: constants.PUPPET_TOKEN,
   name: constants.PUPPET_NAME,
 });
 
-/**
- * generate success reponse body for API call
- *
- * samples:
- *
- *   input: { foo: 'this is content' }
- *   output: { data: { foo: 'this is content' } }
- *
- *   input: 'this is a message'
- *   output: { data: 'this is a message' }
- */
-function genApiSuccessBody(content) {
-  return { data: content || {} };
+const token = uuid();
+
+function onBotLogin(clientId) {
+  webSocket.broadcast({ botStatus: 'online' }, clientId);
 }
-
-/**
- * generate error reponse body for API call
- *
- * samples:
- *
- *   input: 'this is error message'
- *   output: { error: { message: 'this is error message' } }
- *
- *   input: new Error('some error')
- *   output: { error: { message: 'some error' } }
- *
- * you can also specify an error code in second param
- */
-function genApiErrorBody(errMsg, errCode) {
-  errMsg = _.isError(errMsg) ? _.get(errMsg, 'message') : errMsg;
-
-  if (_.isEmpty(errMsg)) {
-    logError('should specify error message for API response');
-    errMsg = 'got error, but description not set';
-  }
-
-  const errDetail = {
-    message: errMsg,
-  };
-  if (errCode) {
-    errDetail.code = errCode;
-  }
-
-  return { error: errDetail };
-}
-
-function startWebSocketServer() {
-  if (webSocket instanceof WebSocket.Server) {
-    return;
-  }
-
-  webSocket = new WebSocket.Server({ port: constants.SERVER_PORT_WS });
-}
-
-function wsBroadcast(data) {
-  if (!(webSocket instanceof WebSocket.Server)) {
-    return;
-  }
-
-  webSocket.clients.forEach((client) => {
-    if (_.get(client, 'readyState') === WebSocket.OPEN) {
-      const dataStr = _.attempt(JSON.stringify, genApiSuccessBody(data));
-      client.send(_.isError(dataStr) ? data : dataStr);
-    }
-  });
-}
-
-function onBotLogin() {
-  wsBroadcast({ botStatus: 'online' });
-}
-
-function onBotScan(code, status) {
+async function onBotScan(code, status) {
   const data = {
     botStatus: 'scanning',
     scanStatus: _.get(constants.ScanStatus, status),
@@ -103,26 +47,31 @@ function onBotScan(code, status) {
     if (_.isEmpty(code)) {
       _.merge(data, { action: 'confirm' });
     } else {
-      _.merge(data, { action: 'scan', qrCode: code });
+      let qrCode = await utils.genQrcode(code, 'dataUrl');
+      if (_.isError(qrCode)) {
+        logError(`cast qrcode '${code}' to dataUrl failed: ${qrCode.message}`);
+        qrCode = code;
+      }
+
+      _.merge(data, { action: 'scan', qrCode });
     }
   }
 
-  wsBroadcast(data);
+  webSocket.broadcast(data);
 }
-
 async function onBotLogout() {
   await bot.stop();
 
-  wsBroadcast({ botStatus: 'offline' });
+  webSocket.broadcast({ botStatus: 'offline' });
 }
 
-async function botOnline() {
+async function botOnline(clientId) {
   if (bot.isOnline()) {
-    wsBroadcast({ botStatus: 'online' });
+    webSocket.broadcast({ botStatus: 'online' }, clientId);
     return;
   }
 
-  bot.setListener('login', onBotLogin);
+  bot.setListener('login', _.partial(onBotLogin, clientId), true);
   bot.setListener('scan', onBotScan);
   bot.setListener('logout', onBotLogout);
 
@@ -153,7 +102,7 @@ async function findGroups(filter, projection) {
     found = await bot.dbModels.room.Model.find(
       condition,
       projection || { _id: 0, __v: 0 },
-      { lean: true, sort: { name: 1 } }
+      { lean: true }
     ).exec();
   } catch (err) {
     return err;
@@ -162,6 +111,41 @@ async function findGroups(filter, projection) {
   return projection
     ? _.map(found, itm => _.pick(itm, _.keys(projection)))
     : found;
+}
+
+async function findGroupMembers(groupId) {
+  const myId = _.get(bot, 'profile.id');
+  const condition = { user: myId, id: groupId };
+
+  let group;
+  try {
+    group = await bot.dbModels.room.Model.findOne(
+      condition,
+      { memberList: 1 },
+      { lean: true }
+    ).exec();
+  } catch (err) {
+    return err;
+  }
+
+  const memberList = _.get(group, 'memberList');
+  if (_.isEmpty(memberList)) {
+    return new Error('group not found');
+  }
+
+  const projection = { id: 1, wechat: 1, name: 1, alias: 1, avatar: 1, blacklisted: 1 };
+  let contacts;
+  try {
+    contacts = await bot.dbModels.contact.Model.find(
+      { user: myId, id: { $in: memberList } },
+      projection,
+      { lean: true }
+    ).exec();
+  } catch (err) {
+    return err;
+  }
+
+  return _.map(contacts, itm => _.pick(itm, _.keys(projection)));
 }
 
 async function findMessages(senderId, limit = 10) {
@@ -176,14 +160,14 @@ async function findMessages(senderId, limit = 10) {
   try {
     found = await bot.dbModels.message.Model.find(
       condition,
-      { __v: 0 },
+      { __v: 0, _id: 0 },
       { lean: true, limit, sort: { date: -1 } }
     ).exec();
   } catch (err) {
     return err;
   }
 
-  return _.map(found, (msg) => {
+  const messages = _.map(found, (msg) => {
     let text = msg.text;
     const parsed = utils.parseMessage(msg.text, msg.type);
     if (msg.type === constants.MessageType.MiniProgram) {
@@ -193,24 +177,44 @@ async function findMessages(senderId, limit = 10) {
       }
     } else if (msg.type === constants.MessageType.Contact) {
       if (_.get(parsed, 'name')) {
-        text = _.get(parsed, 'name');
+        text = _.get(parsed, 'name', 'unknown');
       }
     }
+
     return {
-      _id: msg._id.toString(),
+      id: msg.id,
       date: msg.date,
       text,
+      from: msg.from,
       type: msg.type,
     };
   });
+
+  const senderProjection = {
+    id: 1,
+    name: 1,
+    wechat: 1,
+    avatar: 1,
+  };
+  const senderIds = _.keys(_.groupBy(messages, 'from'));
+  let senders = await bot.dbModels.contact.findContacts(myId, senderIds, senderProjection);
+  if (!_.isError(senders) && !_.isEmpty(senders)) {
+    senders = _.map(senders, s => _.pick(s, _.keys(senderProjection)));
+    _.each(messages, (msg) => {
+      const senderInfo = _.find(senders, sender => _.get(sender, 'id') === msg.from);
+      msg.from = senderInfo;
+    });
+  }
+
+  return messages;
 }
 
 async function genMsgParams(messageId) {
   let msg;
   try {
     msg = await bot.dbModels.message.Model.findOne(
-      { _id: mongoose.Types.ObjectId(messageId) },
-      { type: 1, text: 1 },
+      { id: messageId },
+      { type: 1, text: 1, id: 1 },
       { lean: true }
     ).exec();
   } catch (err) {
@@ -221,25 +225,16 @@ async function genMsgParams(messageId) {
     return new Error('message not found');
   }
 
-  const parsed = utils.parseMessage(msg.text, msg.type);
-
-  const data = {
-    type: msg.type,
-  };
-
-  if (msg.type === constants.MessageType.MiniProgram) {
-    data.params = {
-      appid: _.get(parsed, 'accId') || constants.MINIPROGRAM_ACCID,
-      title: _.get(parsed, 'title') || constants.MINIPROGRAM_TITLE,
-      pagePath: _.get(parsed, 'pagePath'),
-      thumbUrl: _.get(parsed, 'thumbUrl'),
-      thumbKey: _.get(parsed, 'thumbKey'),
-    };
-  } else {
-    data.params = parsed;
+  const params = await bot.genForwardParams(null, msg);
+  if (_.isError(params)) {
+    return params;
   }
 
-  return data;
+  return {
+    type: msg.type,
+    id: messageId,
+    params,
+  };
 }
 
 function mapMsgParams(messageIds) {
@@ -260,95 +255,160 @@ function mapMsgParams(messageIds) {
   });
 }
 
-async function sendMessage(params, msgType, target, targetType) {
-  if (!bot.isOnline()) {
-    return new Error('bot offline');
-  }
-  const targetStr = targetType === 'room'
-    ? `group ${target}`
-    : `contact ${target}`;
-
-  log(`send message to ${targetStr}, params:\n${JSON.stringify(params)}`);
-  return bot.sendMessage(params, msgType, target, targetType);
-}
-
-function newMessageQueue() {
-  const q = async.queue(
-    async (task) => {
-      const { params, type, groupId, interval } = task || {};
-      if (_.isEmpty(params) || _.isNil(type) || !groupId) {
-        return new Error('invalid params');
-      }
-
-      const send = await sendMessage(params, type, groupId, 'room');
-      if (!_.isError(send)) {
-        await utils.wait(interval || 3000);
-      }
+function ackTaskFinished(taskId = 'foo', clientId) {
+  webSocket.broadcast(
+    {
+      botStatus: 'running',
+      // FIXME
+      taskId,
+      taskStatus: 'finish',
     },
-    1
+    clientId
   );
-
-  q.drain(() => {
-    wsBroadcast({ botStatus: 'idle' });
-  });
-
-  return q;
 }
 
-const messageQueue = newMessageQueue();
+function ackMessageStatus(groupId, messageId, taskId = 'foo', clientId, failed = false) {
+  webSocket.broadcast(
+    {
+      botStatus: 'running',
+      taskId,
+      taskStatus: 'running',
+      messageStatus: failed ? 'failed' : 'send',
+      groupId,
+      messageId,
+    },
+    clientId
+  );
+}
 
-function queueTasks(messages, groupIds, groupInterval = 10000, msgInterval = 3000) {
-  _.each(
-    groupIds,
-    (groupId) => {
-      _.each(
-        messages,
-        (message, index) => {
-          const task = _.merge(
+function genTaskId() {
+  return Date.now();
+}
+
+async function queueTask(messageIds, groupIds, taskId, clientId) {
+  const messagesParams = await mapMsgParams(messageIds);
+  if (_.isError(messagesParams)) {
+    logError(`queueTask failed: gen messageParams failed: ${messagesParams.message}`);
+    return messagesParams;
+  }
+
+  const task = {
+    messages: _.flatMap(
+      groupIds,
+      (groupId, groupIndex) => _.map(
+        messagesParams,
+        (messageParams, msgIndex) => {
+          // { groupId, callback, params, type, id }
+          const taskParams = _.merge(
             {
               groupId,
-              interval: index === _.size(messages) - 1 ? groupInterval : msgInterval,
+              callback: _.partial(ackMessageStatus, groupId, messageParams.id, taskId, clientId),
             },
-            message // { params, type }
+            messageParams
           );
-          messageQueue.push(task);
+          if (msgIndex === _.size(messagesParams) - 1) {
+            taskParams.lastGroupMessage = true;
+
+            if (groupIndex === _.size(groupIds) - 1) {
+              taskParams.lastTaskMessage = true;
+            }
+          }
+          return taskParams;
         }
-      );
-    }
-  );
+      )
+    ),
+    callback: _.partial(ackTaskFinished, taskId, clientId),
+  };
+
+  bot.sendGroupMessageQueue.push(task);
+
+  return taskId;
 }
 
-async function queueForwards(messageIds, groupIds) {
+async function queueForwards(messageIds, groupIds, clientId) {
   if (!_.isArray(messageIds)) {
     messageIds = [messageIds];
   }
   if (!_.isArray(groupIds)) {
     groupIds = [groupIds];
   }
+
+  const taskId = genTaskId();
   messageIds = _.compact(messageIds);
   groupIds = _.compact(groupIds);
+
   if (_.isEmpty(messageIds) || _.isEmpty(groupIds)) {
     return new Error('invalid params');
   }
 
-  const messages = await mapMsgParams(messageIds);
-  if (_.isError(messages)) {
-    return messages;
-  }
+  log(
+    `queueForwards: clientId: ${clientId}, taskId: ${taskId}, messageIds: ${messageIds}, groupIds: ${groupIds}`
+  );
 
-  queueTasks(messages, groupIds);
+  return queueTask(messageIds, groupIds, taskId, clientId);
 }
 
+async function blacklistContacts(adds, removes) {
+  if (_.isString(adds)) {
+    adds = [adds];
+  }
+  if (_.isString(removes)) {
+    removes = [removes];
+  }
+
+  adds = _.uniq(_.compact(adds));
+  removes = _.uniq(_.compact(removes));
+
+  if (!_.isEmpty(adds)) {
+    try {
+      await bot.dbModels.contact.Model.update(
+        { id: { $in: adds } },
+        { $set: { blacklisted: true } },
+        { multi: true }
+      ).exec();
+    } catch (err) {
+      return err;
+    }
+  }
+
+  if (!_.isEmpty(removes)) {
+    try {
+      await bot.dbModels.contact.Model.update(
+        { id: { $in: removes } },
+        { $set: { blacklisted: false } },
+        { multi: true }
+      ).exec();
+    } catch (err) {
+      return err;
+    }
+  }
+}
+
+async function refreshContact(contactId) {
+  if (!contactId) {
+    return new Error('invalid contactId');
+  }
+  return bot.refreshContact(contactId);
+}
+
+async function refreshGroup(groupId) {
+  if (!groupId) {
+    return new Error('invalid groupId');
+  }
+  return bot.refreshGroup(groupId);
+}
 
 module.exports = {
-  genApiSuccessBody,
-  genApiErrorBody,
+  token,
 
-  startWebSocketServer,
   botOnline,
   botLogout,
 
   findGroups,
   findMessages,
+  findGroupMembers,
   queueForwards,
+  blacklistContacts,
+  refreshContact,
+  refreshGroup,
 };

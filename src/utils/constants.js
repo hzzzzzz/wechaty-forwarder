@@ -3,11 +3,13 @@
 const config = require('config');
 const wechatyPuppet = require('wechaty-puppet');
 const _ = require('lodash');
+const path = require('path');
 
 const TIME_ZONE = 'Asia/Shanghai';
 
-const PUBLIC_DIR = 'public';
-const AVATAR_DIR = `${PUBLIC_DIR}/common/avatar`;
+const PUBLIC_DIR = path.join(__dirname, '../../public');
+const QRCODE_DIR = path.join(PUBLIC_DIR, 'qrcode');
+const AVATAR_DIR = path.join(PUBLIC_DIR, 'common/avatar');
 
 const DB_NAME = _.get(config, 'db.name', 'wechaty');
 
@@ -19,9 +21,11 @@ const SERVER = _.get(config, 'server.addr', '127.0.0.1');
 const SERVER_PORT_WEB = _.get(config, 'server.web.port');
 const SERVER_PORT_WS = _.get(config, 'server.webSocket.port');
 
+const COOKIE_KEYS = {
+  clientId: 'wechaty_clientId',
+};
 const MINIPROGRAM_ACCID = _.get(config, 'miniProgram.accId');
 const MINIPROGRAM_TITLE = '小程序';
-
 
 module.exports = {
   // MessageType:
@@ -70,16 +74,21 @@ module.exports = {
 
   TIME_ZONE,
 
+  PUBLIC_DIR,
+  QRCODE_DIR,
   AVATAR_DIR,
 
   DB_NAME,
 
+  PUPPET_TYPE,
   PUPPET_NAME,
   PUPPET_TOKEN,
 
   SERVER,
   SERVER_PORT_WEB,
   SERVER_PORT_WS,
+
+  COOKIE_KEYS,
 
   MINIPROGRAM_ACCID,
   MINIPROGRAM_TITLE,

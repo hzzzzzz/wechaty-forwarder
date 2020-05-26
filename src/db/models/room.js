@@ -54,11 +54,10 @@ class Room {
 
   async addOrUpdateRoom(currentUserId, roomInfo) {
     logVerbose(
-      'addOrUpdateRoom, currentUser=', currentUserId, 'roomInfo=', roomInfo
+      `addOrUpdateRoom, currentUser=${currentUserId}, room=${JSON.stringify(roomInfo)}`
     );
-
     if (!currentUserId) {
-      return new Error('invalid currentUserId');
+      return new Error('contactId of current user must be specified');
     }
     const roomId = _.get(roomInfo, 'id');
     if (!roomId) {
@@ -81,12 +80,8 @@ class Room {
   }
 
   async updateRoomMembers(currentUserId, roomId, memberList) {
-    logVerbose(
-      'updateRoomMembers, currentUser=', currentUserId, 'roomId=', roomId, 'memberList=', memberList
-    );
-
     if (!currentUserId) {
-      return new Error('invalid currentUserId');
+      return new Error('contactId of current user must be specified');
     }
     if (!roomId) {
       return new Error('invalid roomId');
@@ -111,7 +106,7 @@ class Room {
 
   async findRooms(currentUserId, roomIds, projection = DEFAULT_PROJECTION) {
     if (!currentUserId) {
-      return new Error('invalid currentUserId');
+      return new Error('contactId of current user must be specified');
     }
 
     const condition = { user: currentUserId };
