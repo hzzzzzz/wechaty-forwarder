@@ -137,7 +137,7 @@ async function findGroupMembers(groupId) {
   let contacts;
   try {
     contacts = await bot.dbModels.contact.Model.find(
-      { user: myId, id: { $in: memberList } },
+      { users: myId, id: { $in: memberList } },
       projection,
       { lean: true }
     ).exec();

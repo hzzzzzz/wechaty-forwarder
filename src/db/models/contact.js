@@ -27,7 +27,7 @@ const TYPES_ENUM = _.values(TYPES);
 
 const contactSchema = new mongoose.Schema(
   {
-    user: String,                               // contactId of current wechat account
+    users: [String],
     id: { type: String, unique: true },         // contactId of contact
     wechat: String,
     name: String,
@@ -38,16 +38,16 @@ const contactSchema = new mongoose.Schema(
     city: String,
     province: String,
     address: String,
-    isFriend: Boolean,
+    isFriend: [String],                        // contactId of users
     type: { type: Number, enum: TYPES_ENUM },
-    self: Boolean,
     blacklisted: Boolean,
   }
 );
 
 contactSchema.index({
-  user: 1,
+  users: 1,
 });
+
 contactSchema.index(
   {
     wechat: 1,
@@ -61,7 +61,7 @@ const DEFAULT_PROJECTION = _.chain(contactSchema)
     (result, value, key) => { result[key] = 1; },
     {}
   )
-  .omit('user')
+  .omit('users')
   .set('_id', 0)
   .value();
 
@@ -92,11 +92,19 @@ class Contact {
       return new Error('invalid contactId');
     }
 
+    const isFriend = _.get(contactInfo, 'isFriend');
+    const setObj = _.omit(contactInfo, ['users', 'isFriend']);
+    const addToSetObj = { users: currentUserId };
+    if (isFriend) {
+      addToSetObj.isFriend = currentUserId;
+    }
+
     try {
       const updated = await this.Model.updateOne(
-        { user: currentUserId, id: contactId },
+        { id: contactId },
         {
-          $set: contactInfo,
+          $set: setObj,
+          $addToSet: addToSetObj,
         },
         { upsert: true }
       ).exec();
@@ -141,7 +149,7 @@ class Contact {
   }
 
   async findContacts(currentUserId, contactIds, projection = DEFAULT_PROJECTION) {
-    const condition = { user: currentUserId };
+    const condition = { users: currentUserId };
     if (!_.isEmpty(contactIds)) {
       if (!_.isArray(contactIds)) {
         contactIds = [contactIds];
@@ -162,7 +170,7 @@ class Contact {
     let found;
     try {
       found = await this.Model.findOne(
-        { user: currentUserId, id: contactId, blacklisted: true },
+        { users: currentUserId, id: contactId, blacklisted: true },
         DEFAULT_PROJECTION,
         { lean: true }
       ).exec();
