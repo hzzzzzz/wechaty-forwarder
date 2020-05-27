@@ -58,7 +58,7 @@ class Bot extends PuppetBot {
   }
 
   async genForwardParams(messageId, msg) {
-    if (_.isEmpty(msg)) {
+    if (messageId && _.isEmpty(msg)) {
       try {
         msg = await this.dbModels.message.Model.findOne(
           { id: messageId },
