@@ -79,7 +79,7 @@ class Bot extends PuppetBot {
       return parsed || new Error('invalid message');
     }
 
-    let params = parsed;
+    const params = parsed;
     if (msg.type === constants.MessageType.MiniProgram) {
       if (params.isPayload) {
         _.unset(params, 'isPayload');
