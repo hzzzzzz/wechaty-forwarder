@@ -333,13 +333,9 @@ class Bot {
       info.address = address;
     }
 
-    if (contactInstance.self()) {
-      info.self = true;
-    }
-
     info = utils.compactObj(info);
 
-    const myId = info.self ? contactId : _.get(this.profile, 'id');
+    const myId = contactInstance.self() ? contactId : _.get(this.profile, 'id');
 
     await this.dbModels.contact.addOrUpdateContacts(myId, info);
 
@@ -657,7 +653,7 @@ class Bot {
   }
 
   async genForwardParams(messageId, msg) {
-    if (_.isEmpty(msg)) {
+    if (messageId && _.isEmpty(msg)) {
       try {
         msg = await this.dbModels.message.Model.findOne(
           { id: messageId },
