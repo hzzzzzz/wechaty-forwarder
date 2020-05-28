@@ -10,7 +10,7 @@ const logVerbose = _.partial(logger.verbose, 'roomModel');
 
 const roomSchema = new mongoose.Schema(
   {
-    user: String,                               // contactId of current wechat account
+    users: [String],
     id: { type: String, unique: true },
     name: String,
     avatar: String,
@@ -21,11 +21,7 @@ const roomSchema = new mongoose.Schema(
 );
 
 roomSchema.index({
-  user: 1,
-});
-roomSchema.index({
-  user: 1,
-  name: 1,
+  users: 1,
 });
 
 const DEFAULT_PROJECTION = _.chain(roomSchema)
@@ -34,7 +30,7 @@ const DEFAULT_PROJECTION = _.chain(roomSchema)
     (result, value, key) => { result[key] = 1; },
     {}
   )
-  .omit('user')
+  .omit('users')
   .set('_id', 0)
   .value();
 
@@ -66,9 +62,10 @@ class Room {
 
     try {
       const updated = await this.Model.updateOne(
-        { user: currentUserId, id: roomId },
+        { id: roomId },
         {
           $set: roomInfo,
+          $addToSet: { users: currentUserId },
         },
         { upsert: true }
       ).exec();
@@ -92,7 +89,7 @@ class Room {
 
     try {
       const updated = await this.Model.updateOne(
-        { user: currentUserId, id: roomId },
+        { users: currentUserId, id: roomId },
         {
           $set: { memberList },
         }
@@ -109,7 +106,7 @@ class Room {
       return new Error('contactId of current user must be specified');
     }
 
-    const condition = { user: currentUserId };
+    const condition = { users: currentUserId };
     if (roomIds) {
       if (!_.isArray(roomIds)) {
         roomIds = [roomIds];
