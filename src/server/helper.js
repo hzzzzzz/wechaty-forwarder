@@ -95,7 +95,7 @@ async function botLogout() {
 }
 
 async function findGroups(filter, projection) {
-  const condition = _.merge({ user: _.get(bot, 'profile.id') }, filter);
+  const condition = _.merge({ users: _.get(bot, 'profile.id') }, filter);
 
   let found;
   try {
@@ -115,7 +115,7 @@ async function findGroups(filter, projection) {
 
 async function findGroupMembers(groupId) {
   const myId = _.get(bot, 'profile.id');
-  const condition = { user: myId, id: groupId };
+  const condition = { users: myId, id: groupId };
 
   let group;
   try {
