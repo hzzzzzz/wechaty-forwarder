@@ -26,7 +26,7 @@
     "wechaty-puppet-padplus": "^0.7.16",
     "winston": "^3.2.1",
     "winston-daily-rotate-file": "^4.4.2",
-    "ws": "^7.2.3"
+    "ws": "^7.4.6"
   },
   "devDependencies": {
     "eslint": "^6.8.0",
