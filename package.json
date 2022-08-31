@@ -13,7 +13,7 @@
     "isomorphic-ws": "^4.0.1",
     "jsend": "^1.1.0",
     "lodash": "^4.17.15",
-    "moment-timezone": "^0.5.28",
+    "moment-timezone": "^0.5.35",
     "mongoose": "^5.9.7",
     "path": "^0.12.7",
     "qrcode": "^1.4.4",
